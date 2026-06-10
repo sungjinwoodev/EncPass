@@ -15,22 +15,20 @@ REPO_VERSION_URL = "https://raw.githubusercontent.com/sungjinwoodev/EncPass/main
 LOCAL_FILE = __file__
 
 AUTO_LOCK_SECONDS = 180
-UPDATE_INTERVAL = 10
-
-LOCAL_VERSION = "1.0.2"
+UPDATE_INTERVAL = 10800
+LOCAL_VERSION = "1.0.3"
 
 print_lock = threading.Lock()
-interrupt_event = threading.Event()
 
 
-def safe_print(*args, **kwargs):
+def p(*a):
     with print_lock:
-        print(*args, **kwargs)
+        print(*a)
 
 
-def safe_input(prompt):
+def i(x):
     with print_lock:
-        return input(prompt)
+        return input(x)
 
 
 class C:
@@ -44,8 +42,9 @@ class C:
 
 class Updater:
     def __init__(self):
-        self.running = True
-        self.update = None
+        self.enabled = True
+        self.update_available = False
+        self.data = None
 
     def check(self):
         try:
@@ -54,19 +53,17 @@ class Updater:
         except:
             return None
 
-    def loop(self):
-        while self.running:
-            data = self.check()
+    def run_check(self):
+        if not self.enabled:
+            return
 
-            if data:
-                v = data.get("version")
+        data = self.check()
+        if not data:
+            return
 
-                if v and v != LOCAL_VERSION:
-                    self.update = data
-                    interrupt_event.set()
-                    return
-
-            time.sleep(UPDATE_INTERVAL)
+        if data.get("version") != LOCAL_VERSION:
+            self.update_available = True
+            self.data = data
 
 
 updater = Updater()
@@ -112,8 +109,7 @@ def decrypt(blob, password, salt):
     aes = AESGCM(key)
     nonce = base64.b64decode(blob["nonce"])
     enc = base64.b64decode(blob["data"])
-    raw = aes.decrypt(nonce, enc, None)
-    return json.loads(raw.decode())
+    return json.loads(aes.decrypt(nonce, enc, None).decode())
 
 
 def load_vault_file():
@@ -123,22 +119,23 @@ def load_vault_file():
         return json.load(f)
 
 
-def save_vault_file(vault):
+def save_vault_file(v):
     tmp = VAULT_FILE + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(vault, f)
+        json.dump(v, f)
     os.replace(tmp, VAULT_FILE)
 
 
 def init_vault():
-    if not os.path.exists(VAULT_FILE):
-        safe_print(f"{C.YELLOW}First time setup{C.RESET}")
-        pw = safe_input("Create Master Password: ")
-        salt = os.urandom(16)
-        blob = encrypt([], pw, salt)
-        save_vault_file({"salt": base64.b64encode(salt).decode(), "blob": blob})
-        safe_print(f"{C.GREEN}Vault created{C.RESET}")
-        time.sleep(1)
+    if os.path.exists(VAULT_FILE):
+        return
+    p(f"{C.YELLOW}First time setup{C.RESET}")
+    pw = i("Create Master Password: ")
+    salt = os.urandom(16)
+    blob = encrypt([], pw, salt)
+    save_vault_file({"salt": base64.b64encode(salt).decode(), "blob": blob})
+    p(f"{C.GREEN}Vault created{C.RESET}")
+    time.sleep(1)
 
 
 def clear():
@@ -151,32 +148,31 @@ class App:
         self.salt = None
         self.data = []
         self.locked = True
-        self.last_action = time.time()
+        self.last = time.time()
         self.timer = threading.Thread(target=self.auto_lock, daemon=True)
 
     def auto_lock(self):
         while True:
-            if not self.locked and time.time() - self.last_action > AUTO_LOCK_SECONDS:
+            if not self.locked and time.time() - self.last > AUTO_LOCK_SECONDS:
                 clear()
-                safe_print(f"{C.RED}Session expired{C.RESET}")
+                p(f"{C.RED}Session expired{C.RESET}")
                 self.lock()
             time.sleep(1)
 
-    def reset_timer(self):
-        self.last_action = time.time()
+    def reset(self):
+        self.last = time.time()
 
-    def load(self, password):
-        vault = load_vault_file()
-        if not vault:
+    def load(self, pw):
+        v = load_vault_file()
+        if not v:
             return False
-
         try:
-            salt = base64.b64decode(vault["salt"])
-            data = decrypt(vault["blob"], password, salt)
+            salt = base64.b64decode(v["salt"])
+            data = decrypt(v["blob"], pw, salt)
         except:
             return False
 
-        self.master = password
+        self.master = pw
         self.salt = salt
         self.data = data
         self.locked = False
@@ -188,110 +184,93 @@ class App:
 
     def unlock(self):
         clear()
-        safe_print(f"{C.CYAN}{C.BOLD}=== ENCPASS LOGIN ==={C.RESET}\n")
+        p(f"{C.CYAN}{C.BOLD}=== ENCPASS LOGIN ==={C.RESET}\n")
 
         while True:
-            if interrupt_event.is_set():
-                return "UPDATE"
+            pw = i("Master Password: ")
 
-            pw = safe_input("Master Password: ")
-
-            if interrupt_event.is_set():
+            if updater.update_available:
                 return "UPDATE"
 
             if self.load(pw):
-                safe_print(f"{C.GREEN}Unlocked{C.RESET}")
+                p(f"{C.GREEN}Unlocked{C.RESET}")
                 time.sleep(1)
                 return True
 
-            safe_print(f"{C.RED}Wrong password{C.RESET}")
+            p(f"{C.RED}Wrong password{C.RESET}")
 
     def lock(self):
         self.master = None
         self.data = []
         self.locked = True
 
+    def menu(self):
+        clear()
+        p(f"{C.CYAN}{C.BOLD}=== ENCPASS ==={C.RESET}")
+        p("1. Add")
+        p("2. View")
+        p("3. Delete")
+        p("4. Lock")
+        p("5. Exit")
+        p(f"Auto-update: {'ON' if updater.enabled else 'OFF'}")
+
     def add(self):
         clear()
-
-        if interrupt_event.is_set():
-            return
-
-        site = safe_input("Site: ")
-        user = safe_input("Username: ")
-        pw = safe_input("Password: ")
-
+        site = i("Site: ")
+        user = i("Username: ")
+        pw = i("Password: ")
         self.data.append({"site": site, "username": user, "password": pw})
         self.save()
-
-        safe_print(f"{C.GREEN}Saved{C.RESET}")
+        p(f"{C.GREEN}Saved{C.RESET}")
         time.sleep(1)
 
     def view(self):
         clear()
-
-        for i, item in enumerate(self.data):
-            safe_print(f"[{i}] {item['site']} - {item['username']}")
-
-        safe_input("")
+        for k, v in enumerate(self.data):
+            p(f"[{k}] {v['site']} - {v['username']}")
+        i("")
 
     def delete(self):
         clear()
-
-        for i, item in enumerate(self.data):
-            safe_print(f"[{i}] {item['site']}")
-
+        for k, v in enumerate(self.data):
+            p(f"[{k}] {v['site']}")
         try:
-            idx = int(safe_input("Delete: "))
+            idx = int(i("Delete: "))
             self.data.pop(idx)
             self.save()
         except:
             pass
 
-    def menu(self):
+    def run_update(self):
         clear()
-        safe_print(f"{C.CYAN}{C.BOLD}=== ENCPASS ==={C.RESET}")
-        safe_print("1. Add")
-        safe_print("2. View")
-        safe_print("3. Delete")
-        safe_print("4. Lock")
-        safe_print("5. Exit")
-
-    def force_update(self):
-        clear()
-        safe_print(f"\n{C.YELLOW}UPDATE FOUND. APPLYING...{C.RESET}")
-        time.sleep(0.5)
-        apply_update(updater.update["download_url"])
+        p(f"{C.YELLOW}Update available. Apply? (y/n){C.RESET}")
+        c = i("> ").lower()
+        if c == "y":
+            apply_update(updater.data["download_url"])
+        updater.update_available = False
 
     def run(self):
         init_vault()
         self.timer.start()
-        threading.Thread(target=updater.loop, daemon=True).start()
 
         while True:
+            updater.run_check()
 
-            if interrupt_event.is_set():
-                self.force_update()
+            if updater.update_available and updater.enabled:
+                self.run_update()
 
             if self.locked:
                 r = self.unlock()
                 if r == "UPDATE":
                     continue
-
-            if interrupt_event.is_set():
-                self.force_update()
+                continue
 
             self.menu()
+            c = i("Choice: ")
+            self.reset()
 
-            if interrupt_event.is_set():
-                self.force_update()
-
-            c = safe_input("Choice: ")
-
-            if interrupt_event.is_set():
-                self.force_update()
-
-            self.reset_timer()
+            if updater.update_available and updater.enabled:
+                self.run_update()
 
             if c == "1":
                 self.add()
@@ -302,11 +281,7 @@ class App:
             elif c == "4":
                 self.lock()
             elif c == "5":
-                updater.running = False
                 break
-
-            if interrupt_event.is_set():
-                self.force_update()
 
 
 if __name__ == "__main__":
