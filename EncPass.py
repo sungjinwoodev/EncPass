@@ -81,11 +81,19 @@ class Updater:
 
                 if remote_version and remote_version != LOCAL_VERSION:
                     print(f"\n{C.YELLOW}Update found: {remote_version}{C.RESET}")
+                    choice = input("Do you want to update now? (y/n): ").strip().lower()
 
-                    code = self.download_new_version(download_url)
+                    if choice == "y":
+                        print("Downloading update...")
+                        code = self.download_new_version(download_url)
 
-                    if code:
-                        self.apply_update(code)
+                        if code:
+                            self.apply_update(code)
+                        else:
+                            print(f"{C.RED}Download failed{C.RESET}")
+
+                    else:
+                        print(f"{C.CYAN}Update skipped{C.RESET}")
 
             time.sleep(UPDATE_INTERVAL)
 
@@ -93,7 +101,6 @@ class Updater:
 updater = Updater()
 
 
-# ---------------- CRYPTO ----------------
 def derive_key(password, salt):
     return hash_secret_raw(
         password.encode(),
@@ -130,7 +137,6 @@ def decrypt(blob, password, salt):
     return json.loads(raw.decode())
 
 
-# ---------------- VAULT ----------------
 def load_vault_file():
     if not os.path.exists(VAULT_FILE):
         return None
@@ -177,7 +183,6 @@ def loader(text="Loading", duration=2):
     sys.stdout.write("\r")
 
 
-# ---------------- APP ----------------
 class App:
     def __init__(self):
         self.master = None
@@ -198,7 +203,6 @@ class App:
     def reset_timer(self):
         self.last_action = time.time()
 
-    # ---------- LOAD ----------
     def load(self, password):
         vault = load_vault_file()
         if not vault:
@@ -223,7 +227,6 @@ class App:
             "blob": blob
         })
 
-    # ---------- LOGIN ----------
     def unlock(self):
         clear()
         print(f"{C.CYAN}{C.BOLD}=== ENCPASS LOGIN ==={C.RESET}\n")
@@ -245,7 +248,6 @@ class App:
         self.data = []
         self.locked = True
 
-    # ---------- FEATURES ----------
     def add(self):
         clear()
         site = input("Site: ")
