@@ -7,57 +7,94 @@ import threading
 import itertools
 import sys
 import requests
+import shutil
+import tempfile
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from argon2.low_level import hash_secret_raw, Type
 
-# ---------------- CONFIG ----------------
 VAULT_FILE = "vault.json"
 REPO_VERSION_URL = "https://raw.githubusercontent.com/sungjinwoodev/EncPass/main/version.json"
-AUTO_LOCK_SECONDS = 60
-UPDATE_INTERVAL = 300 
+LOCAL_FILE = __file__
 
-# ---------------- COLORS (UNCHANGED UI) ----------------
+AUTO_LOCK_SECONDS = 30
+UPDATE_INTERVAL = 30 
+
+LOCAL_VERSION = "1.0.0"
+
 class C:
     RESET = "\033[0m"
     RED = "\033[31m"
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
-    BLUE = "\033[34m"
     CYAN = "\033[36m"
     BOLD = "\033[1m"
 
 
-# ---------------- UPDATE MANAGER ----------------
-class UpdateManager:
+class Updater:
     def __init__(self):
-        self.latest_version = None
         self.running = True
-        self.lock = threading.Lock()
+        self.latest = None
 
-    def check_update(self):
+    def version_url(self):
+        return REPO_VERSION_URL + f"?t={time.time()}"
+
+    def check(self):
         try:
-            r = requests.get(REPO_VERSION_URL, timeout=5)
-            return r.json().get("version")
+            r = requests.get(self.version_url(), timeout=5)
+            data = r.json()
+            return data
         except:
             return None
 
-    def updater_loop(self):
-        while self.running:
-            latest = self.check_update()
+    def download_new_version(self, url):
+        try:
+            r = requests.get(url, timeout=10)
+            return r.text
+        except:
+            return None
 
-            if latest:
-                with self.lock:
-                    self.latest_version = latest
+    def apply_update(self, new_code):
+        try:
+            tmp_file = LOCAL_FILE + ".tmp"
+
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                f.write(new_code)
+
+            shutil.move(tmp_file, LOCAL_FILE)
+
+            print(f"{C.GREEN}Updated successfully! Restarting...{C.RESET}")
+            time.sleep(1)
+
+            os.execv(sys.executable, [sys.executable, LOCAL_FILE])
+
+        except Exception as e:
+            print(f"{C.RED}Update failed: {e}{C.RESET}")
+
+    def loop(self):
+        while self.running:
+            data = self.check()
+
+            if data:
+                remote_version = data.get("version")
+                download_url = data.get("download_url")
+
+                if remote_version and remote_version != LOCAL_VERSION:
+                    print(f"\n{C.YELLOW}Update found: {remote_version}{C.RESET}")
+
+                    code = self.download_new_version(download_url)
+
+                    if code:
+                        self.apply_update(code)
 
             time.sleep(UPDATE_INTERVAL)
 
 
-update_manager = UpdateManager()
+updater = Updater()
 
 
-# ---------------- CRYPTO CORE ----------------
-def derive_key(password: str, salt: bytes) -> bytes:
+# ---------------- CRYPTO ----------------
+def derive_key(password, salt):
     return hash_secret_raw(
         password.encode(),
         salt,
@@ -106,24 +143,24 @@ def save_vault_file(vault):
         json.dump(vault, f)
 
 
-def init_vault_if_needed():
+def init_vault():
     if not os.path.exists(VAULT_FILE):
-        print(f"{C.YELLOW}No vault found. Creating new vault...{C.RESET}")
-        password = input("Create Master Password: ")
+        print(f"{C.YELLOW}First time setup{C.RESET}")
+        pw = input("Create Master Password: ")
 
         salt = os.urandom(16)
-        blob = encrypt([], password, salt)
+        blob = encrypt([], pw, salt)
 
         save_vault_file({
             "salt": base64.b64encode(salt).decode(),
             "blob": blob
         })
 
-        print(f"{C.GREEN}Vault created successfully!{C.RESET}")
+        print(f"{C.GREEN}Vault created{C.RESET}")
         time.sleep(1)
 
 
-# ---------------- UI HELPERS (UNCHANGED) ----------------
+# ---------------- UI ----------------
 def clear():
     os.system("cls" if os.name == "nt" else "clear")
 
@@ -137,10 +174,10 @@ def loader(text="Loading", duration=2):
         sys.stdout.flush()
         time.sleep(0.1)
 
-    sys.stdout.write("\r" + " " * (len(text) + 2) + "\r")
+    sys.stdout.write("\r")
 
 
-# ---------------- MAIN APP ----------------
+# ---------------- APP ----------------
 class App:
     def __init__(self):
         self.master = None
@@ -150,12 +187,11 @@ class App:
         self.last_action = time.time()
         self.timer = threading.Thread(target=self.auto_lock, daemon=True)
 
-    # ---------- AUTO LOCK ----------
     def auto_lock(self):
         while True:
             if not self.locked and time.time() - self.last_action > AUTO_LOCK_SECONDS:
                 clear()
-                print(f"\n{C.RED}Session expired.{C.RESET}")
+                print(f"\n{C.RED}Session expired{C.RESET}")
                 self.lock()
             time.sleep(1)
 
@@ -180,7 +216,6 @@ class App:
         self.locked = False
         return True
 
-    # ---------- SAVE ----------
     def save(self):
         blob = encrypt(self.data, self.master, self.salt)
         save_vault_file({
@@ -194,65 +229,49 @@ class App:
         print(f"{C.CYAN}{C.BOLD}=== ENCPASS LOGIN ==={C.RESET}\n")
 
         while True:
-            password = input("Master Password: ")
+            pw = input("Master Password: ")
 
-            loader("Verifying", 1.2)
+            loader("Verifying", 1)
 
-            if self.load(password):
-                loader("Unlocking vault", 1.2)
-                print(f"{C.GREEN}Unlocked successfully!{C.RESET}")
+            if self.load(pw):
+                print(f"{C.GREEN}Unlocked{C.RESET}")
                 time.sleep(1)
                 return True
 
-            print(f"{C.RED}Wrong password!{C.RESET}")
-            time.sleep(1)
+            print(f"{C.RED}Wrong password{C.RESET}")
 
-    # ---------- LOCK ----------
     def lock(self):
         self.master = None
         self.data = []
         self.locked = True
 
-    # ---------- FEATURES (UNCHANGED) ----------
+    # ---------- FEATURES ----------
     def add(self):
         clear()
         site = input("Site: ")
-        username = input("Username: ")
-        password = input("Password: ")
+        user = input("Username: ")
+        pw = input("Password: ")
 
-        self.data.append({
-            "site": site,
-            "username": username,
-            "password": password
-        })
-
+        self.data.append({"site": site, "username": user, "password": pw})
         self.save()
-        self.reset_timer()
+
         print(f"{C.GREEN}Saved{C.RESET}")
         time.sleep(1)
 
     def view(self):
         clear()
 
-        if not self.data:
-            print(f"{C.RED}Empty vault{C.RESET}")
-            input()
-            return
-
         for i, item in enumerate(self.data):
             print(f"[{i}] {item['site']} - {item['username']}")
 
         try:
-            idx = int(input("\nIndex: "))
+            idx = int(input("Index: "))
             item = self.data[idx]
             clear()
-            print("Site:", item["site"])
-            print("Username:", item["username"])
-            print("Password:", item["password"])
+            print(item)
         except:
-            print(f"{C.RED}Invalid{C.RESET}")
+            print("Invalid")
 
-        self.reset_timer()
         input()
 
     def delete(self):
@@ -262,38 +281,26 @@ class App:
             print(f"[{i}] {item['site']}")
 
         try:
-            idx = int(input("Delete index: "))
-            removed = self.data.pop(idx)
+            idx = int(input("Delete: "))
+            self.data.pop(idx)
             self.save()
-            print(f"{C.GREEN}Deleted {removed['site']}{C.RESET}")
         except:
-            print(f"{C.RED}Invalid{C.RESET}")
+            pass
 
-        self.reset_timer()
-        time.sleep(1)
-
-    # ---------- MENU (UNCHANGED) ----------
     def menu(self):
         clear()
         print(f"{C.CYAN}{C.BOLD}=== ENCPASS ==={C.RESET}")
-
-        # update notice (non-intrusive)
-        with update_manager.lock:
-            if update_manager.latest_version:
-                print(f"{C.YELLOW}Update Available: v{update_manager.latest_version}{C.RESET}")
-
         print("1. Add")
         print("2. View")
         print("3. Delete")
         print("4. Lock")
         print("5. Exit")
 
-    # ---------- RUN ----------
     def run(self):
-        init_vault_if_needed()
+        init_vault()
 
         self.timer.start()
-        threading.Thread(target=update_manager.updater_loop, daemon=True).start()
+        threading.Thread(target=updater.loop, daemon=True).start()
 
         while True:
             if self.locked:
@@ -301,25 +308,20 @@ class App:
                     continue
 
             self.menu()
-            choice = input("Choice: ")
+            c = input("Choice: ")
             self.reset_timer()
 
-            if choice == "1":
+            if c == "1":
                 self.add()
-            elif choice == "2":
+            elif c == "2":
                 self.view()
-            elif choice == "3":
+            elif c == "3":
                 self.delete()
-            elif choice == "4":
+            elif c == "4":
                 self.lock()
-                print(f"{C.RED}Locked{C.RESET}")
-                time.sleep(1)
-            elif choice == "5":
-                update_manager.running = False
+            elif c == "5":
+                updater.running = False
                 break
-            else:
-                print(f"{C.RED}Invalid{C.RESET}")
-                time.sleep(1)
 
 
 if __name__ == "__main__":
