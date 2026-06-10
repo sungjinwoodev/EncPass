@@ -16,7 +16,7 @@ LOCAL_FILE = __file__
 
 AUTO_LOCK_SECONDS = 180
 UPDATE_INTERVAL = 10800
-LOCAL_VERSION = "1.0.3"
+LOCAL_VERSION = "1.0.0"
 
 print_lock = threading.Lock()
 
@@ -49,19 +49,35 @@ class Updater:
     def check(self):
         try:
             r = requests.get(REPO_VERSION_URL, timeout=5)
+            if r.status_code != 200:
+                return None
             return r.json()
         except:
             return None
 
+    def is_newer(self, remote, local):
+        try:
+            r = tuple(map(int, remote.split(".")))
+            l = tuple(map(int, local.split(".")))
+            return r > l
+        except:
+            return False
+
     def run_check(self):
-        if not self.enabled:
+        if not self.enabled or self.update_available:
             return
 
         data = self.check()
         if not data:
             return
 
-        if data.get("version") != LOCAL_VERSION:
+        remote_version = data.get("version")
+        download_url = data.get("download_url")
+
+        if not remote_version or not download_url:
+            return
+
+        if self.is_newer(remote_version, LOCAL_VERSION):
             self.update_available = True
             self.data = data
 
@@ -70,15 +86,22 @@ updater = Updater()
 
 
 def apply_update(url):
-    r = requests.get(url, timeout=10)
-    code = r.text
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200:
+            return
 
-    tmp = LOCAL_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(code)
+        code = r.text
 
-    os.replace(tmp, LOCAL_FILE)
-    os.execv(sys.executable, [sys.executable, LOCAL_FILE])
+        tmp = LOCAL_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        os.replace(tmp, LOCAL_FILE)
+        os.execv(sys.executable, [sys.executable, LOCAL_FILE])
+
+    except:
+        pass
 
 
 def derive_key(password, salt):
