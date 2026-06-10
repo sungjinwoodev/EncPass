@@ -17,10 +17,10 @@ VAULT_FILE = "vault.json"
 REPO_VERSION_URL = "https://raw.githubusercontent.com/sungjinwoodev/EncPass/main/version.json"
 LOCAL_FILE = __file__
 
-AUTO_LOCK_SECONDS = 30
-UPDATE_INTERVAL = 30 
+AUTO_LOCK_SECONDS = 180
+UPDATE_INTERVAL = 10800 
 
-LOCAL_VERSION = "1.0.0"
+LOCAL_VERSION = "1.0.1"
 
 class C:
     RESET = "\033[0m"
