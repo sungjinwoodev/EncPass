@@ -14,7 +14,7 @@ from argon2.low_level import hash_secret_raw, Type
 # ---------------- CONFIG ----------------
 VAULT_FILE = "vault.json"
 REPO_VERSION_URL = "https://raw.githubusercontent.com/sungjinwoodev/EncPass/main/version.json"
-AUTO_LOCK_SECONDS = 30
+AUTO_LOCK_SECONDS = 60
 UPDATE_INTERVAL = 300 
 
 # ---------------- COLORS (UNCHANGED UI) ----------------
